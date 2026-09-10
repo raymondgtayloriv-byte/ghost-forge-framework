@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+.pytest_cache/
+.pytest_cache/
+
+# Never commit a live vault or secrets
+*secret*
+*.pem
+*.key
+.env
+.DS_Store
+
+# Editor / OS
+.idea/
+.vscode/

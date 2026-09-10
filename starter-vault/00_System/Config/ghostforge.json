@@ -1,0 +1,22 @@
+{
+  "autonomous": {
+    "dry_run": true,
+    "enabled": false,
+    "excluded_source_classes": [
+      "triage_draft",
+      "generated",
+      "unverified"
+    ],
+    "min_confidence": 0.9,
+    "require_provenance": true
+  },
+  "canonical_targets": [
+    "030 Projects",
+    "020 Daily"
+  ],
+  "promotion": {
+    "secret_env": "GHOST_FORGE_PROMOTION_SECRET",
+    "token_ttl_hours": 72
+  },
+  "vault_name": "Ghost Forge Framework (starter)"
+}
