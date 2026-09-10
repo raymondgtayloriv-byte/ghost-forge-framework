@@ -1,6 +1,6 @@
 {
-  "decision_id": "DEC-2026-09-10-gf-steward-20260910t080334z-record-the-agreed-harborlight-beacon-retry-policy",
-  "candidate_id": "GF-STEWARD-20260910T080334Z--record-the-agreed-harborlight-beacon-retry-policy",
+  "decision_id": "DEC-2026-09-10-gf-steward-20260910t164142z-record-the-agreed-harborlight-beacon-retry-policy",
+  "candidate_id": "GF-STEWARD-20260910T164142Z--record-the-agreed-harborlight-beacon-retry-policy",
   "source_path": "010 Inbox/Agent_Updates/2026-09-10/2026-09-10 1200 - harborlight - harborlight - harborlight-relay.md",
   "source_hash": "8c901888e11e376f357e18c3ac7b1f1d7f1829d9d2bead96937df0c33d5e284a",
   "project": "harborlight",
@@ -11,6 +11,6 @@
   "supersedes": null,
   "rationale": "Contract-valid signed agent update; source hash verified; simulator evidence attached.",
   "decided_by": "human",
-  "decided_at": "2026-09-10T08:03:34Z",
+  "decided_at": "2026-09-10T16:41:43Z",
   "approval_token": null
 }

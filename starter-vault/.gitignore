@@ -1,0 +1,30 @@
+# Ghost Forge starter vault — local hygiene patterns.
+#
+# This is hygiene, not a security boundary: never store real secrets,
+# credentials, or customer data in the vault, with or without this file.
+# Copy this vault, then keep anything machine-specific out of version
+# control.
+
+# Secrets / credentials (never commit these; the framework refuses to
+# read promotion secrets from the vault at all)
+*secret*
+*.pem
+*.key
+*.p12
+*.pfx
+.env
+.env.*
+
+# OS / editor droppings
+.DS_Store
+Thumbs.db
+*~
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Python tooling (if you run the framework from inside the vault)
+__pycache__/
+.venv/
+.pytest_cache/

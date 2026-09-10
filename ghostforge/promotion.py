@@ -37,9 +37,22 @@ from pathlib import Path
 from .vault import (
     lane, load_config, get_promotion_secret, parse_note, read_note, run_id,
     sha256_file, sha256_text, slugify, today_str, utc_now, write_note,
+    PathContainmentError, resolve_contained,
 )
 
 DECISION_ACTIONS = {"promote", "quarantine", "defer"}
+
+
+def _lane_child(root: Path, lane_name: str, filename: str) -> Path:
+    """Resolve a lane-relative filename, contained under the lane directory.
+
+    Lane filenames derive from review-packet, decision, or run ids — data
+    that can be hand-edited — so they are contained, not merely joined.
+    """
+    try:
+        return resolve_contained(lane(root, lane_name), filename, purpose=lane_name)
+    except PathContainmentError as e:
+        raise ValueError(str(e)) from e
 
 
 # ---------------------------------------------------------------------------
@@ -48,7 +61,7 @@ DECISION_ACTIONS = {"promote", "quarantine", "defer"}
 
 def scaffold_decision(root: Path, candidate_id: str) -> Path:
     """Create a decision JSON scaffold for a review-packet candidate."""
-    rp = lane(root, "review_packets") / f"{candidate_id}.md"
+    rp = _lane_child(root, "review_packets", f"{candidate_id}.md")
     if not rp.exists():
         raise FileNotFoundError(f"no review packet for candidate {candidate_id!r}")
     fm, _ = parse_note(rp.read_text(encoding="utf-8"))
@@ -110,6 +123,7 @@ def _canonical_proposal_dict(decision: dict) -> dict:
         "project": decision.get("project", "unassigned"),
         "supersedes": decision.get("supersedes"),
         "rationale": decision.get("rationale"),
+        "decided_by": decision.get("decided_by", "human"),
     }
 
 
@@ -140,10 +154,14 @@ def verify_token(secret: str, token: str, proposal: dict) -> bool:
 
 
 def build_proposal(root: Path, decision_path: Path) -> tuple[Path, str]:
-    """Build a pending (non-canonical) proposal from a human decision.
+    """Build a pending (non-canonical) proposal from a decision.
 
-    Returns (proposal_path, approval_token). The token must be presented to
-    ``apply``; printing it here models the explicit human handoff.
+    Returns (proposal_path, approval_token). The token binds the proposal's
+    exact content: it guarantees apply-time integrity, not the identity of
+    the approver. In the human path, handing the token over models the
+    explicit human handoff; in the autonomous path the token still protects
+    apply semantics, but provenance (``decided_by``) is what distinguishes
+    the two — never the token alone.
     """
     root = Path(root)
     cfg = load_config(root)
@@ -152,7 +170,7 @@ def build_proposal(root: Path, decision_path: Path) -> tuple[Path, str]:
     proposal = _canonical_proposal_dict(decision)
     token = issue_token(secret, proposal, cfg["promotion"]["token_ttl_hours"])
     pid = f"PROP-{decision['decision_id']}"
-    pdir = lane(root, "proposals") / pid
+    pdir = _lane_child(root, "proposals", pid)
     pdir.mkdir(parents=True, exist_ok=True)
     (pdir / "proposal.json").write_text(
         json.dumps(proposal, indent=2, sort_keys=True), encoding="utf-8"
@@ -170,12 +188,26 @@ def build_proposal(root: Path, decision_path: Path) -> tuple[Path, str]:
     return pdir / "proposal.json", token
 
 
-def _target_allowed(cfg: dict, target: str) -> bool:
-    targ = Path(target)
-    return any(
-        str(targ) == reg or str(targ).startswith(reg.rstrip("/") + "/")
-        for reg in cfg["canonical_targets"]
-    )
+def _resolve_canonical_target(root: Path, cfg: dict, target: str) -> Path:
+    """Resolve a canonical target dir, contained under a registered root.
+
+    The target must resolve underneath the vault root *and* underneath one
+    of the configured canonical target roots. String-prefix matching is
+    deliberately not used: ``..`` traversal, absolute paths, and symlink
+    escapes are all rejected. Raises PermissionError on any violation.
+    """
+    try:
+        tdir = resolve_contained(root, target, purpose="canonical target")
+    except PathContainmentError as e:
+        raise PermissionError(str(e)) from e
+    for reg in cfg.get("canonical_targets", []):
+        try:
+            rroot = resolve_contained(root, reg, purpose="canonical target root")
+        except PathContainmentError:
+            continue
+        if tdir == rroot or rroot in tdir.parents:
+            return tdir
+    raise PermissionError(f"target not registered as canonical: {target!r}")
 
 
 def apply_proposal(root: Path, proposal_path: Path, token: str) -> str:
@@ -199,20 +231,23 @@ def apply_proposal(root: Path, proposal_path: Path, token: str) -> str:
 
     # --- promote path ---
     target_dir = proposal.get("canonical_target") or ""
-    if not _target_allowed(cfg, target_dir):
-        raise PermissionError(f"target not registered as canonical: {target_dir!r}")
+    dest_dir = _resolve_canonical_target(root, cfg, target_dir)
 
     # Unknown/unavailable source data is unsafe, never "zero": the source
-    # hash must verify against the live file.
+    # hash must verify against the live file. The source path itself must
+    # resolve inside the vault — no absolute paths, no traversal, no
+    # symlink escapes.
     src_rel = proposal.get("source_path")
     expected_hash = proposal.get("source_hash")
     if not src_rel or not expected_hash:
         raise ValueError("proposal lacks source provenance: apply refused")
-    src = root / src_rel
+    try:
+        src = resolve_contained(root, src_rel, purpose="source path")
+    except PathContainmentError as e:
+        raise ValueError(str(e)) from e
     if not src.exists() or sha256_file(src) != expected_hash:
         raise ValueError("source hash mismatch or source missing: apply refused")
 
-    dest_dir = root / target_dir
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest = dest_dir / f"{today_str()} - {slugify(proposal['title'])}.md"
     if dest.exists() and not proposal.get("supersedes"):
@@ -222,6 +257,7 @@ def apply_proposal(root: Path, proposal_path: Path, token: str) -> str:
 
     rid = run_id("GF-PROMOTE")
     ts = utc_now().strftime("%Y-%m-%dT%H:%M:%SZ")
+    decided_by = proposal.get("decided_by", "human")
     fm = {
         "title": proposal["title"],
         "canonical_truth": True,
@@ -230,7 +266,8 @@ def apply_proposal(root: Path, proposal_path: Path, token: str) -> str:
         "source_hash": expected_hash,
         "promotion_run": rid,
         "decision_id": proposal["decision_id"],
-        "approved_by": "human",
+        "decided_by": decided_by,
+        "approved_by": decided_by,
         "supersedes": proposal.get("supersedes"),
         "promoted_at": ts,
     }
@@ -240,6 +277,7 @@ def apply_proposal(root: Path, proposal_path: Path, token: str) -> str:
         "run_id": rid,
         "created": ts,
         "decision_id": proposal["decision_id"],
+        "decided_by": decided_by,
         "created_files": [str(dest.relative_to(root))],
         "source": {"path": src_rel, "sha256": expected_hash},
     }
@@ -248,7 +286,7 @@ def apply_proposal(root: Path, proposal_path: Path, token: str) -> str:
     (mdir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
     # Mark the review packet decided.
-    rp = lane(root, "review_packets") / f"{proposal['candidate_id']}.md"
+    rp = _lane_child(root, "review_packets", f"{proposal['candidate_id']}.md")
     if rp.exists():
         fm_rp, body_rp = read_note(rp)
         fm_rp["status"] = "promoted"
@@ -259,14 +297,20 @@ def apply_proposal(root: Path, proposal_path: Path, token: str) -> str:
 
 def _apply_quarantine(root: Path, proposal: dict) -> str:
     src_rel = proposal.get("source_path")
-    if not src_rel or not (root / src_rel).exists():
+    if not src_rel:
+        raise ValueError("quarantine requires a source path")
+    try:
+        src = resolve_contained(root, src_rel, purpose="quarantine source")
+    except PathContainmentError as e:
+        raise ValueError(str(e)) from e
+    if not src.exists():
         raise ValueError("quarantine requires an existing source path")
     rid = run_id("GF-QUARANTINE")
     qdir = lane(root, "quarantine")
     qdir.mkdir(parents=True, exist_ok=True)
-    original_text = (root / src_rel).read_text(encoding="utf-8")
-    dest = qdir / f"{rid} - {Path(src_rel).name}"
-    (root / src_rel).unlink()
+    original_text = src.read_text(encoding="utf-8")
+    dest = qdir / f"{rid} - {src.name}"
+    src.unlink()
     fm = {
         "quarantined_at": utc_now().strftime("%Y-%m-%dT%H:%M:%SZ"),
         "reason": proposal.get("rationale") or "quarantined by human decision",
@@ -281,7 +325,7 @@ def _apply_quarantine(root: Path, proposal: dict) -> str:
 
 def quarantine_candidate(root: Path, candidate_id: str, reason: str) -> Path:
     """Direct quarantine of a review candidate (human-initiated, no token needed)."""
-    rp = lane(root, "review_packets") / f"{candidate_id}.md"
+    rp = _lane_child(root, "review_packets", f"{candidate_id}.md")
     if not rp.exists():
         raise FileNotFoundError(f"no review packet for candidate {candidate_id!r}")
     fm, body = read_note(rp)
@@ -289,25 +333,33 @@ def quarantine_candidate(root: Path, candidate_id: str, reason: str) -> Path:
     qdir = lane(root, "quarantine")
     qdir.mkdir(parents=True, exist_ok=True)
     rid = run_id("GF-QUARANTINE")
-    if src_rel and (Path(root) / src_rel).exists():
-        dest = qdir / f"{rid} - {Path(src_rel).name}"
-        shutil.move(str(Path(root) / src_rel), str(dest))
+    if src_rel:
+        try:
+            src = resolve_contained(root, src_rel, purpose="quarantine source")
+        except PathContainmentError as e:
+            raise ValueError(str(e)) from e
+        if src.exists():
+            dest = qdir / f"{rid} - {src.name}"
+            shutil.move(str(src), str(dest))
     fm["status"] = "quarantined"
     fm["quarantine_reason"] = reason
     fm["quarantined_at"] = utc_now().strftime("%Y-%m-%dT%H:%M:%SZ")
-    out = qdir / f"{rid} - {candidate_id}.md"
+    out = qdir / f"{rid} - {slugify(candidate_id)}.md"
     return write_note(out, fm, body + f"\n\n**Quarantine reason:** {reason}\n")
 
 
 def rollback(root: Path, run_id_: str) -> list[str]:
     """Undo a promotion run using its manifest. Returns removed paths."""
-    manifest_path = lane(root, "promotions") / run_id_ / "manifest.json"
+    manifest_path = _lane_child(root, "promotions", f"{run_id_}/manifest.json")
     if not manifest_path.exists():
         raise FileNotFoundError(f"no manifest for run {run_id_!r}")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     removed = []
     for rel in manifest.get("created_files", []):
-        p = Path(root) / rel
+        try:
+            p = resolve_contained(root, rel, purpose="manifest entry")
+        except PathContainmentError as e:
+            raise ValueError(str(e)) from e
         if p.exists():
             p.unlink()
             removed.append(rel)

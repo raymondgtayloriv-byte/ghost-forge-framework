@@ -6,14 +6,19 @@ When several AI agents write into the same vault, draft material gets
 mistaken for canonical truth. Ghost Forge fixes that with an
 **observer/executor split**:
 
-- The **observer** (Shadow Steward) sees everything and can change nothing
-  canonical. It collects evidence read-only into timestamped packets.
+- The **observer** (Shadow Steward) surveys the configured evidence roots
+  and can change nothing canonical. It collects evidence read-only into
+  timestamped packets.
 - The **executor** (Operator) moves material through review toward truth —
-  but the *only* way anything becomes canonical is a **human-approved,
+  and the default way anything becomes canonical is a **human-reviewed,
   token-gated promotion**.
 
-No single automated component can both *find* something and *declare it
-true*. The human gate sits structurally between them.
+No automated component *finds* something and *declares it true* on its
+own: the human gate sits structurally between observation and canonical
+writes. One explicit experimental exception exists — the autonomous lane
+(disabled and dry-run by default, with stricter eligibility gates) — and
+its promotions carry `autonomous-lane` provenance so they are never
+mistaken for human approvals.
 
 ```
 capture → triage → steward evidence → review packet

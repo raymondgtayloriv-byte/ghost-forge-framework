@@ -104,6 +104,39 @@ def ensure_vault_skeleton(root: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Path containment
+# ---------------------------------------------------------------------------
+
+class PathContainmentError(ValueError):
+    """A vault-relative path escaped (or tried to escape) its allowed root."""
+
+
+def resolve_contained(root: Path, rel: str | Path, *, purpose: str = "path") -> Path:
+    """Resolve a vault-relative path, refusing anything that escapes ``root``.
+
+    Rejects absolute paths outright, rejects ``..`` traversal that would
+    leave ``root``, and resolves symlinks *before* checking containment so a
+    symlink inside the vault cannot redirect an operation outside it.
+    Returns the resolved absolute path. Ordinary nested paths are unaffected.
+    """
+    root_resolved = Path(root).resolve()
+    rel_str = str(rel)
+    if not rel_str or rel_str.strip() == "":
+        raise PathContainmentError(f"{purpose}: empty path not allowed")
+    p = Path(rel_str)
+    if p.is_absolute():
+        raise PathContainmentError(
+            f"{purpose}: absolute paths not allowed: {rel_str!r}"
+        )
+    resolved = (root_resolved / p).resolve()
+    if resolved != root_resolved and root_resolved not in resolved.parents:
+        raise PathContainmentError(
+            f"{purpose}: escapes its allowed root: {rel_str!r}"
+        )
+    return resolved
+
+
+# ---------------------------------------------------------------------------
 # Frontmatter notes
 # ---------------------------------------------------------------------------
 

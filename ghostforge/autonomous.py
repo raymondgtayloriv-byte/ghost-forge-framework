@@ -21,13 +21,22 @@ The lane never authors content: it promotes the candidate's verbatim
 source content through the same gated apply path as human decisions. The
 synthesized decision is marked decided_by="autonomous-lane" with its gate
 evidence, so it is auditable and distinguishable from human approvals.
+
+The approval token still gates the apply (proposal integrity), but in the
+autonomous case it is *not* evidence of human review — provenance
+(``decided_by`` carried through decision → proposal → canonical note and
+manifest) is what distinguishes the two paths. Never treat a token as
+proof of a human decision.
 """
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
-from .vault import lane, load_config, parse_note, sha256_file, today_str, utc_now
+from .vault import (
+    lane, load_config, parse_note, sha256_file, today_str, utc_now,
+    PathContainmentError, resolve_contained,
+)
 from .promotion import build_proposal, apply_proposal
 
 
@@ -56,7 +65,11 @@ def evaluate(root: Path) -> dict:
     for rp, fm in _autonomous_candidates(root):
         cid = fm.get("candidate_id", rp.stem)
         src_rel = fm.get("source_path")
-        src = root / src_rel if src_rel else None
+        try:
+            src = resolve_contained(root, src_rel, purpose="autonomous source") if src_rel else None
+        except PathContainmentError:
+            rejected.append((cid, "source path escapes vault"))
+            continue
         if not src or not src.exists():
             rejected.append((cid, "no live source to verify"))
             continue
@@ -105,7 +118,10 @@ def run(root: Path, dry_run: bool = True) -> dict:
     for cand in result["eligible"]:
         rp = Path(cand["review_packet"])
         fm, _ = parse_note(rp.read_text(encoding="utf-8"))
-        src = root / fm["source_path"]
+        try:
+            src = resolve_contained(root, fm["source_path"], purpose="autonomous source")
+        except PathContainmentError:
+            continue  # already gated in evaluate(); fail closed here too
         src_fm, src_body = parse_note(src.read_text(encoding="utf-8"))
         decision = {
             "decision_id": f"DEC-AUTO-{today_str()}-{cand['candidate_id'][:16]}",

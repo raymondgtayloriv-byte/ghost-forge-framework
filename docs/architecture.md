@@ -9,15 +9,23 @@ truth*?
 
 Two halves with opposite powers:
 
-- **The observer (Shadow Steward)** can read everything in the intake
-  lanes and write evidence packets. It cannot write canonical notes and
-  cannot promote anything. Read-only by construction.
+- **The observer (Shadow Steward)** can read the configured evidence
+  roots (raw captures, agent updates, triage digests) and write evidence
+  packets. It cannot write canonical notes and cannot promote anything.
+  Read-only by construction.
 - **The executor (Operator)** moves material along the pipeline and is
   the only writer of canonical notes — but only through the gated
   promotion path, and only with a valid approval token.
 
-Splitting them means no single automated component can both *find*
-something and *declare it true*. Truth requires the human gate in between.
+Splitting them means no automated component *finds* something and
+*declares it true* on its own. The default path to canonical truth runs
+through human review and the token gate. The one explicit exception is
+the experimental autonomous lane (disabled and dry-run by default, with
+stricter eligibility gates): enabling it delegates the decision role to
+the lane, and its promotions carry `autonomous-lane` provenance so they
+are never mistaken for human approvals. The token still protects
+proposal integrity at apply time, but it is not proof of a human
+decision in the autonomous case.
 
 ## The pipeline
 

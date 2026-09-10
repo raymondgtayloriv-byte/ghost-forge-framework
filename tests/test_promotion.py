@@ -123,6 +123,48 @@ def test_autonomous_disabled_by_default(vault, filed_update):
         pass  # rejected list is informational
 
 
+def test_autonomous_enabled_path_provenance(vault, filed_update, monkeypatch):
+    """Enabled + non-dry-run autonomous run promotes with autonomous provenance.
+
+    Also verifies the stricter eligibility boundary: a raw-capture rumor
+    must be rejected, not promoted.
+    """
+    from ghostforge import intake as intake_mod
+    from ghostforge.vault import read_note, today_str
+
+    # Add an ineligible raw capture (unverified rumor) alongside the update.
+    intake_mod.new_raw_capture(
+        vault, "harborlight", "Rumor: north relay hardware fault",
+        "Someone said the north relay hardware is failing. Unverified.",
+    )
+    cid = _run_to_review(vault, filed_update)
+    cfg_path = lane(vault, "config") / "ghostforge.json"
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    cfg["autonomous"]["enabled"] = True
+    cfg["autonomous"]["dry_run"] = False
+    cfg_path.write_text(json.dumps(cfg), encoding="utf-8")
+
+    res = auto_mod.run(vault, dry_run=False)
+    assert res["dry_run"] is False
+    assert len(res["applied"]) == 1
+    assert res["applied"][0]["candidate_id"] == cid
+    # The rumor must have been rejected by the eligibility gates.
+    assert res["rejected"], "expected the raw-capture rumor to be rejected"
+
+    created = list((lane(vault, "projects") / "harborlight" / "Notes").glob("*.md"))
+    assert len(created) == 1
+    fm, _ = read_note(created[0])
+    assert fm["canonical_truth"] is True
+    assert fm["decided_by"] == "autonomous-lane"
+    assert fm["approved_by"] == "autonomous-lane"
+
+    rid = res["applied"][0]["run_id"]
+    manifest = json.loads(
+        (lane(vault, "promotions") / rid / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["decided_by"] == "autonomous-lane"
+
+
 def test_autonomous_dry_run_changes_nothing(vault, filed_update, monkeypatch):
     _run_to_review(vault, filed_update)
     cfg_path = lane(vault, "config") / "ghostforge.json"

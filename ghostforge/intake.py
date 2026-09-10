@@ -133,7 +133,10 @@ def new_agent_update_draft(root: Path, project: str, lane_name: str, agent: str,
                            action_id: str, intent: str) -> Path:
     """Scaffold a blank Agent Update draft satisfying the contract shape."""
     date = today_str()
-    name = f"{date} 1200 - {project} - {lane_name} - {agent}.md"
+    # Slugify interpolated parts: they come from operator input and land in
+    # a filesystem path.
+    name = (f"{date} 1200 - {slugify(project)} - {slugify(lane_name)} "
+            f"- {slugify(agent)}.md")
     fm = {
         "action_id": action_id,
         "project": project,

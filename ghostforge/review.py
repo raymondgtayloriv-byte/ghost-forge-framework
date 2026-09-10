@@ -14,7 +14,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .vault import lane, parse_note, slugify, today_str, utc_now, write_note
+from .vault import (
+    lane, parse_note, slugify, today_str, utc_now, write_note,
+    PathContainmentError, resolve_contained,
+)
 from .steward import list_packets
 
 # Keywords that force a candidate into the exception queue for human review.
@@ -42,6 +45,19 @@ def _risky(item: dict, packet_dir: Path) -> str | None:
     return None
 
 
+def _contained_source(item: dict, vault_root: Path) -> Path | None:
+    """Resolve a steward item's source path, contained under the vault root.
+
+    Steward packet items are our own output, but packets can be hand-edited;
+    a hostile or corrupt path must degrade to "unreadable", never to a read
+    outside the vault.
+    """
+    try:
+        return resolve_contained(vault_root, item["path"], purpose="review source")
+    except (PathContainmentError, KeyError, TypeError):
+        return None
+
+
 def _classify_source(item: dict, vault_root: Path) -> tuple[str, float, str]:
     """Return (source_class, confidence, sensitive) for a steward item.
 
@@ -51,9 +67,9 @@ def _classify_source(item: dict, vault_root: Path) -> tuple[str, float, str]:
     """
     from .intake import validate_agent_update
 
-    src = vault_root / item["path"]
+    src = _contained_source(item, vault_root)
     source_class, confidence, sensitive = "unverified", 0.5, "false"
-    if src.suffix == ".md" and src.exists():
+    if src is not None and src.suffix == ".md" and src.exists():
         text = src.read_text(encoding="utf-8")
         fm, _ = parse_note(text)
         sensitive = str(fm.get("sensitive", "false")).lower()
@@ -64,20 +80,12 @@ def _classify_source(item: dict, vault_root: Path) -> tuple[str, float, str]:
         elif "010 Inbox/Raw Captures" in item["path"]:
             source_class, confidence = "raw-capture", 0.55
     return source_class, confidence, sensitive
-    # Titles live in the source note; fall back to the filename.
-    src = vault_root / item["path"]
-    if src.suffix == ".md" and src.exists():
-        fm, _ = parse_note(src.read_text(encoding="utf-8"))
-        for key in ("title", "intent"):
-            if fm.get(key):
-                return str(fm[key])
-    return Path(item["path"]).stem
 
 
 def _read_title(item: dict, vault_root: Path) -> str:
     # Titles live in the source note; fall back to the filename.
-    src = vault_root / item["path"]
-    if src.suffix == ".md" and src.exists():
+    src = _contained_source(item, vault_root)
+    if src is not None and src.suffix == ".md" and src.exists():
         fm, _ = parse_note(src.read_text(encoding="utf-8"))
         for key in ("title", "intent"):
             if fm.get(key):
